@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Tile Crusader — Mini Retro Platformer</title>
+  <style>
+    html,body{height:100%;margin:0;background:#7ec0ee;display:flex;align-items:center;justify-content:center;font-family:sans-serif}
+    #game-wrap{width:800px;background:#9bd48b;padding:12px;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.25)}
+    canvas{display:block;background:linear-gradient(#87ceeb,#6ec3d6);border-radius:6px}
+    .hud{display:flex;justify-content:space-between;color:#023;font-weight:700;margin:8px 6px}
+    .controls{font-size:13px;color:#013}
+  </style>
+</head>
+<body>
+  <div id="game-wrap">
+    <div class="hud"><div>Tile Crusader</div><div id="status">Lives: 3 &nbsp; Coins: 0</div></div>
+    <canvas id="game" width="800" height="400"></canvas>
+    <div class="controls">Left/Right: ← → or A/D &nbsp; Jump: ↑ or W/Space &nbsp; Restart: R</div>
+  </div>
+
+<script>
+/* Simple tile-based retro platformer in a single HTML file.
+   Features: tile map, player, gravity, collisions, coins, exit tile, simple enemy patrolling.
+   Art is drawn with simple rectangles so this is fully self-contained.
+*/
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const tile = 40; // tile size (pixels)
+let lives = 3, coins = 0;
+
+document.getElementById('status').textContent = `Lives: ${lives}  Coins: ${coins}`;
+
+// Level legend:
+// 0 = empty, 1 = solid block, 2 = coin, 3 = enemy spawn / ground, 4 = exit
+const level = [
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,2,0,0,0],
+  [0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,1,1,1,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0],
+  [0,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,1,1,0],
+  [1,1,0,0,0,0,0,0,1,0,0,2,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,1,0,0,0,0,2,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,3,0,0,0],
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,4,1]
+];
+
+const cols = level[0].length;
+const rows = level.length;
+
+// Player state
+const player = {
+  x: tile*1.5,
+  y: tile*6 - 30,
+  w: 28,
+  h: 36,
+  vx: 0,
+  vy: 0,
+  speed: 2.4,
+  jump: -8.2,
+  onGround: false
+};
+
+// Simple enemy objects
+let enemies = [];
+
+function spawnEnemiesFromMap(){
+  enemies = [];
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      if(level[r][c]===3){
+        enemies.push({x:c*tile + 4, y:r*tile + 4, w:32, h:32, dir:1, speed:1.0});
+      }
+    }
+  }
+}
+spawnEnemiesFromMap();
+
+// Input
+const keys = {};
+window.addEventListener('keydown', e=>{ keys[e.key.toLowerCase()] = true; if(e.key==='r') reset(); });
+window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
+
+// Helpers
+function tileAt(px,py){
+  const c = Math.floor(px / tile);
+  const r = Math.floor(py / tile);
+  if(r<0||r>=rows||c<0||c>=cols) return 0;
+  return level[r][c];
+}
+
+function setTile(r,c,val){ if(r>=0 && r<rows && c>=0 && c<cols) level[r][c] = val; }
+
+function collideWithTiles(x,y,w,h){
+  const hits = [];
+  const r1 = Math.floor(y / tile), r2 = Math.floor((y+h-1)/tile);
+  const c1 = Math.floor(x / tile), c2 = Math.floor((x+w-1)/tile);
+  for(let r=r1;r<=r2;r++) for(let c=c1;c<=c2;c++){
+    if(r<0||r>=rows||c<0||c>=cols) continue;
+    if(level[r][c]===1) hits.push({r,c});
+  }
+  return hits;
+}
+
+function update(dt){
+  // Controls
+  if(keys['arrowleft']||keys['a']) player.vx = -player.speed; else if(keys['arrowright']||keys['d']) player.vx = player.speed; else player.vx = 0;
+  if((keys['arrowup']||keys['w']||keys[' ']) && player.onGround){ player.vy = player.jump; player.onGround=false; }
+
+  // Physics
+  player.vy += 0.45; // gravity
+  player.x += player.vx;
+  // horizontal collisions
+  let hHits = collideWithTiles(player.x, player.y, player.w, player.h);
+  for(const h of hHits){
+    const blockX = h.c*tile;
+    if(player.vx > 0) player.x = blockX - player.w; else if(player.vx < 0) player.x = blockX + tile;
+  }
+
+  player.y += player.vy;
+  let vHits = collideWithTiles(player.x, player.y, player.w, player.h);
+  player.onGround = false;
+  for(const v of vHits){
+    const blockY = v.r*tile;
+    if(player.vy > 0){ // falling
+      player.y = blockY - player.h; player.vy = 0; player.onGround = true;
+    } else if(player.vy < 0){ // rising
+      player.y = blockY + tile; player.vy = 0;
+    }
+  }
+
+  // Tile interactions: coins and exit
+  const left = Math.floor(player.x / tile), right = Math.floor((player.x+player.w-1)/tile);
+  const top = Math.floor(player.y / tile), bottom = Math.floor((player.y+player.h-1)/tile);
+  for(let r=top;r<=bottom;r++) for(let c=left;c<=right;c++){
+    if(r<0||r>=rows||c<0||c>=cols) continue;
+    const t = level[r][c];
+    if(t===2){ coins++; setTile(r,c,0); document.getElementById('status').textContent = `Lives: ${lives}  Coins: ${coins}`; }
+    if(t===4){ // exit
+      levelWin();
+    }
+  }
+
+  // Update enemies
+  for(const e of enemies){
+    e.x += e.dir * e.speed;
+    // simple tile collision to flip
+    const under = tileAt(e.x + e.w/2, e.y + e.h + 2);
+    const front = tileAt(e.x + (e.dir>0? e.w+2: -2), e.y + e.h/2);
+    if(under===0 || front===1){ e.dir *= -1; }
+    // check collision with player
+    if(rectOverlap(player, e)){
+      // simple resolution: if player is falling onto enemy, enemy dies, else player loses life
+      if(player.vy > 1){ // stomped
+        const idx = enemies.indexOf(e); if(idx>=0) enemies.splice(idx,1); player.vy = -5; coins += 1; document.getElementById('status').textContent = `Lives: ${lives}  Coins: ${coins}`;
+      } else {
+        loseLife();
+      }
+    }
+  }
+}
+
+function rectOverlap(a,b){ return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+
+let last = performance.now();
+function loop(t){
+  const dt = (t-last)/16.67; last = t;
+  // clamp dt
+  update(Math.min(dt,4));
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // draw tiles
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      const x = c*tile, y = r*tile;
+      const t = level[r][c];
+      if(t===1){ ctx.fillStyle = '#5b3e1a'; ctx.fillRect(x,y,tile,tile); ctx.strokeStyle='#3a2b14'; ctx.strokeRect(x+1,y+1,tile-2,tile-2); }
+      if(t===2){ // coin
+        ctx.fillStyle='#ffd34d'; ctx.beginPath(); ctx.arc(x+tile/2,y+tile/2,10,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#b88600'; ctx.stroke(); }
+      if(t===4){ ctx.fillStyle='#256'; ctx.fillRect(x+4,y+4,tile-8,tile-8); ctx.fillStyle='#fff'; ctx.font='12px sans-serif'; ctx.fillText('EXIT',x+6,y+22); }
+    }
+  }
+
+  // draw enemies
+  for(const e of enemies){ ctx.fillStyle='#a33'; ctx.fillRect(e.x,e.y,e.w,e.h); }
+
+  // draw player
+  ctx.fillStyle = '#032'; ctx.fillRect(player.x, player.y, player.w, player.h);
+  // small eye
+  ctx.fillStyle='#fff'; ctx.fillRect(player.x + 6, player.y + 8, 6,6);
+}
+
+function loseLife(){ lives--; document.getElementById('status').textContent = `Lives: ${lives}  Coins: ${coins}`; if(lives<=0) gameOver(); else respawn(); }
+
+function respawn(){ player.x = tile*1.5; player.y = tile*6 - 30; player.vx = 0; player.vy = 0; }
+
+function gameOver(){ alert('Game Over — press R to restart'); reset(); }
+
+function levelWin(){ alert('You reached the exit! Good job — restarting level.'); reset(); }
+
+function reset(){
+  // reset map coins and enemies (rebuild original map)
+  // reload hard-coded original level (simple clone)
+  const original = [
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,2,0,0,0],
+  [0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,1,1,1,0,0],
+  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0],
+  [0,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0,0,1,1,0],
+  [1,1,0,0,0,0,0,0,1,0,0,2,0,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,1,0,0,0,0,2,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,3,0,0,0],
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,4,1]
+  ];
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) level[r][c] = original[r][c];
+  lives = 3; coins = 0; document.getElementById('status').textContent = `Lives: ${lives}  Coins: ${coins}`;
+  respawn(); spawnEnemiesFromMap();
+}
+
+// start
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
